@@ -12,12 +12,9 @@ jobs:
 
       - name: Lint
         run: rustup component add rustfmt && cargo fmt -- --check
-      
-      - name: Add wasm target
-        run: rustup target add wasm32-unknown-unknown
 
       - name: Check
-        run: cargo check && cargo check --target wasm32-unknown-unknown
+        run: cargo check
 
       - name: Test
         run: cargo test
