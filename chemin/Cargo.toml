@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 chemin-macros = { path = "../chemin-macros" }
+smallvec = "1.10.0"
