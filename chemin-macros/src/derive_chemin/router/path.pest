@@ -1,0 +1,9 @@
+path = ${ SOI ~ ("/" ~ !sub_route ~ (param | static_path))* ~ ("/" ~ (sub_route | param | static_path))? ~ trailing_slash? ~ EOI }
+static_path = @{
+    (ASCII_ALPHANUMERIC
+    | "." | "-" | "_" | "~" | "!" | "$" | "&" | "'" | "(" | ")" | "*" | "+" | "," | ";" | "=" | ":" | "@")+
+}
+param = ${ ":" ~ field | ":" }
+sub_route = ${ ".." ~ field | ".." }
+field = @{ (!"/" ~ ANY)+ }
+trailing_slash = @{ "/" }
