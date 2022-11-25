@@ -16,7 +16,7 @@ pub trait Chemin: Sized {
         accepted_locales: &AcceptedLocales,
     ) -> Option<(Self, Vec<Locale>)>;
 
-    fn generate_url(&self, locale: Locale) -> String;
+    fn generate_url(&self, locale: &str) -> Option<String>;
 }
 
 pub type Locale = &'static str;

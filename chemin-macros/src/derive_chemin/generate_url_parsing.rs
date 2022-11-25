@@ -1,8 +1,11 @@
 use super::router::*;
+use super::unnamed_param_name;
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::iter;
 use syn::{Fields, Ident};
+
+static UNNAMED_SUB_ROUTE_NAME: &str = "sub_route";
 
 pub fn parsing_method(routes: &[Route], chemin_crate: &TokenStream) -> TokenStream {
     let lazy_type = quote!(#chemin_crate::deps::once_cell::Lazy);
@@ -36,12 +39,6 @@ pub fn parsing_method(routes: &[Route], chemin_crate: &TokenStream) -> TokenStre
         }
     )
 }
-
-fn unnamed_param_name(i: usize) -> String {
-    format!("p{}", i)
-}
-
-static UNNAMED_SUB_ROUTE_NAME: &str = "sub_route";
 
 fn path_to_route_recognizer_path(path: &Path) -> String {
     let mut route_recognizer_path = String::new();
