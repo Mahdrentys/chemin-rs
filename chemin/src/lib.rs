@@ -1,3 +1,5 @@
+pub use chemin_macros::Chemin;
+
 use smallvec::{SmallVec, ToSmallVec};
 
 #[doc(hidden)]
