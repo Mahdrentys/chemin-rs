@@ -5,7 +5,7 @@ use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use proc_macro_error::emit_error;
 use syn::spanned::Spanned;
-use syn::{Fields, Ident, ItemEnum, Variant};
+use syn::{Fields, ItemEnum, Variant};
 
 pub struct Router {
     pub item_enum: ItemEnum,
@@ -28,8 +28,7 @@ impl Router {
 
 #[derive(PartialEq, Eq, Debug)]
 pub struct Route {
-    pub variant: Ident,
-    pub named_fields: bool,
+    pub variant: Variant,
     pub localized_routes: Vec<LocalizedRoute>,
 }
 
@@ -84,8 +83,7 @@ impl Route {
         }
 
         let mut route = Route {
-            variant: variant.ident.clone(),
-            named_fields: matches!(variant.fields, Fields::Named(_)),
+            variant: variant.clone(),
             localized_routes: Vec::new(),
         };
 
@@ -166,8 +164,11 @@ fn test_parsing() {
         .routes,
         vec![
             Route {
-                variant: Ident::new("Home", Span::call_site()),
-                named_fields: false,
+                variant: syn::parse2(quote!(
+                    #[route("/")]
+                    Home
+                ))
+                .unwrap(),
                 localized_routes: vec![LocalizedRoute {
                     path: Path {
                         components: vec![],
@@ -179,8 +180,14 @@ fn test_parsing() {
                 }],
             },
             Route {
-                variant: Ident::new("Hello", Span::call_site()),
-                named_fields: false,
+                variant: syn::parse2(quote!(
+                    #[route(en => "/hello/:")]
+                    #[route(fr => "/bonjour/:")]
+                    #[route(another_one, yet_another_one => "/hello/:")]
+                    #[route(en_US => "/hello/:/")]
+                    Hello(String)
+                ))
+                .unwrap(),
                 localized_routes: vec![
                     LocalizedRoute {
                         path: Path {
@@ -225,8 +232,14 @@ fn test_parsing() {
                 ],
             },
             Route {
-                variant: Ident::new("HelloWithNamedFields", Span::call_site()),
-                named_fields: true,
+                variant: syn::parse2(quote!(
+                    #[route("/hello/:name/:age")]
+                    HelloWithNamedFields {
+                        name: String,
+                        age: u8
+                    }
+                ))
+                .unwrap(),
                 localized_routes: vec![LocalizedRoute {
                     path: Path {
                         components: vec![
@@ -242,8 +255,11 @@ fn test_parsing() {
                 }],
             },
             Route {
-                variant: Ident::new("HelloSubRoute", Span::call_site()),
-                named_fields: false,
+                variant: syn::parse2(quote!(
+                    #[route("/hello/:/..")]
+                    HelloSubRoute(String, SubRoute)
+                ))
+                .unwrap(),
                 localized_routes: vec![LocalizedRoute {
                     path: Path {
                         components: vec![
@@ -258,8 +274,14 @@ fn test_parsing() {
                 }],
             },
             Route {
-                variant: Ident::new("HelloSubRouteWithNamedFields", Span::call_site()),
-                named_fields: true,
+                variant: syn::parse2(quote!(
+                    #[route("/hello/:name/..sub_route")]
+                    HelloSubRouteWithNamedFields {
+                        name: String,
+                        sub_route: SubRoute
+                    }
+                ))
+                .unwrap(),
                 localized_routes: vec![LocalizedRoute {
                     path: Path {
                         components: vec![

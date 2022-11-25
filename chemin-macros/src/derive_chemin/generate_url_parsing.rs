@@ -2,7 +2,7 @@ use super::router::*;
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::iter;
-use syn::Ident;
+use syn::{Fields, Ident};
 
 pub fn parsing_method(routes: &[Route], chemin_crate: &TokenStream) -> TokenStream {
     let lazy_type = quote!(#chemin_crate::deps::once_cell::Lazy);
@@ -163,51 +163,60 @@ fn route_variant_building(route: &Route, localized_route: &LocalizedRoute) -> To
         })
     }
 
-    if route.named_fields {
-        let fields = localized_route
-            .path
-            .params()
-            .map(|param| param.unwrap())
-            .map(|param| {
-                let field_ident = Ident::new(param, localized_route.path.span);
-                let parsing_code = parsing_code(quote!(params.find(#param).unwrap()));
-                quote!(#field_ident: #parsing_code)
-            })
-            .chain(match &localized_route.path.sub_route {
-                Some(sub_route) => match sub_route {
-                    SubRoute::Unnamed => unreachable!(),
-                    SubRoute::Named(name) => {
-                        let field_ident = Ident::new(name, localized_route.path.span);
-                        Box::new(iter::once(quote!(#field_ident: sub_route)))
-                            as Box<dyn Iterator<Item = _>>
-                    }
-                },
+    match route.variant.fields {
+        Fields::Named(_) => {
+            let fields = localized_route
+                .path
+                .params()
+                .map(|param| param.unwrap())
+                .map(|param| {
+                    let field_ident = Ident::new(param, localized_route.path.span);
+                    let parsing_code = parsing_code(quote!(params.find(#param).unwrap()));
+                    quote!(#field_ident: #parsing_code)
+                })
+                .chain(match &localized_route.path.sub_route {
+                    Some(sub_route) => match sub_route {
+                        SubRoute::Unnamed => unreachable!(),
+                        SubRoute::Named(name) => {
+                            let field_ident = Ident::new(name, localized_route.path.span);
+                            Box::new(iter::once(quote!(#field_ident: sub_route)))
+                                as Box<dyn Iterator<Item = _>>
+                        }
+                    },
 
-                None => Box::new(iter::empty()) as Box<dyn Iterator<Item = _>>,
-            });
-        let variant = &route.variant;
-        quote!(Self::#variant { #(#fields),* })
-    } else {
-        let fields = localized_route
-            .path
-            .params()
-            .enumerate()
-            .map(|(i, _)| {
-                let param_name = unnamed_param_name(i);
-                parsing_code(quote!(param.find(#param_name).unwrap()))
-            })
-            .chain(match &localized_route.path.sub_route {
-                Some(sub_route) => match sub_route {
-                    SubRoute::Unnamed => {
-                        Box::new(iter::once(quote!(sub_route))) as Box<dyn Iterator<Item = _>>
-                    }
+                    None => Box::new(iter::empty()) as Box<dyn Iterator<Item = _>>,
+                });
+            let variant_ident = &route.variant.ident;
+            quote!(Self::#variant_ident { #(#fields),* })
+        }
 
-                    SubRoute::Named(_) => unreachable!(),
-                },
+        Fields::Unnamed(_) => {
+            let fields = localized_route
+                .path
+                .params()
+                .enumerate()
+                .map(|(i, _)| {
+                    let param_name = unnamed_param_name(i);
+                    parsing_code(quote!(param.find(#param_name).unwrap()))
+                })
+                .chain(match &localized_route.path.sub_route {
+                    Some(sub_route) => match sub_route {
+                        SubRoute::Unnamed => {
+                            Box::new(iter::once(quote!(sub_route))) as Box<dyn Iterator<Item = _>>
+                        }
 
-                None => Box::new(iter::empty()) as Box<dyn Iterator<Item = _>>,
-            });
-        let variant = &route.variant;
-        quote!(Self::#variant(#(#fields),*))
+                        SubRoute::Named(_) => unreachable!(),
+                    },
+
+                    None => Box::new(iter::empty()) as Box<dyn Iterator<Item = _>>,
+                });
+            let variant_ident = &route.variant.ident;
+            quote!(Self::#variant_ident(#(#fields),*))
+        }
+
+        Fields::Unit => {
+            let variant_ident = &route.variant.ident;
+            quote!(Self::#variant_ident)
+        }
     }
 }
