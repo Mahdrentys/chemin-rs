@@ -1,13 +1,19 @@
 use smallvec::{SmallVec, ToSmallVec};
 
+#[doc(hidden)]
+pub mod deps {
+    pub use once_cell;
+    pub use route_recognizer;
+}
+
 pub trait Chemin: Sized {
     fn parse(url: &str) -> Option<(Self, Vec<Locale>)> {
-        Self::parse_with_accepted_locales(url, AcceptedLocales::Any)
+        Self::parse_with_accepted_locales(url, &AcceptedLocales::Any)
     }
 
     fn parse_with_accepted_locales(
         url: &str,
-        accepted_locales: AcceptedLocales,
+        accepted_locales: &AcceptedLocales,
     ) -> Option<(Self, Vec<Locale>)>;
 
     fn generate_url(&self, locale: Locale) -> String;

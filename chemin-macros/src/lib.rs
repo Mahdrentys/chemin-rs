@@ -4,8 +4,23 @@ mod helpers;
 use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 
+fn chemin_crate() -> proc_macro2::TokenStream {
+    use proc_macro2::{Ident, Span};
+    use proc_macro_crate::FoundCrate;
+    use quote::quote;
+
+    match proc_macro_crate::crate_name("chemin").unwrap() {
+        FoundCrate::Itself => quote!(crate),
+
+        FoundCrate::Name(name) => {
+            let ident = Ident::new(&name, Span::call_site());
+            quote!(::#ident)
+        }
+    }
+}
+
 #[proc_macro_derive(Chemin, attributes(route))]
 #[proc_macro_error]
 pub fn derive_chemin(item: TokenStream) -> TokenStream {
-    derive_chemin::derive_chemin(item.into()).into()
+    derive_chemin::derive_chemin(item.into(), &chemin_crate()).into()
 }
