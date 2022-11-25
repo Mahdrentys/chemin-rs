@@ -30,8 +30,8 @@ pub fn parsing_method(routes: &[Route], chemin_crate: &TokenStream) -> TokenStre
             });
 
             match ROUTER.recognize(url) {
-                Some(match_) => match_.handler()(accepted_locales, match_.params()),
-                None => None,
+                ::std::option::Option::Some(match_) => match_.handler()(accepted_locales, match_.params()),
+                ::std::option::Option::None => ::std::option::Option::None,
             }
         }
     )
@@ -132,7 +132,7 @@ fn router_entry(
                 #sub_route_parsing
                 (#route_variant_building, #resulting_locales)
             } else {
-                None
+                ::std::option::Option::None
             }
         });
     )
@@ -149,8 +149,8 @@ fn sub_route_parsing(sub_route: &SubRoute, chemin_crate: &TokenStream) -> TokenS
         let sub_route_accepted_locales = accepted_locales.accepted_locales_for_sub_route(ROUTE_LOCALES);
         let (sub_route, sub_route_resulting_locales) =
             match #chemin_crate::Chemin::parse_with_accepted_locales(sub_route_path, sub_route_accepted_locales) {
-                Some(value) => value,
-                None => return None,
+                ::std::option::Option::Some(value) => value,
+                ::std::option::Option::None => return ::std::option::Option::None,
             };
     )
 }
@@ -159,7 +159,7 @@ fn route_variant_building(route: &Route, localized_route: &LocalizedRoute) -> To
     fn parsing_code(str_exp: TokenStream) -> TokenStream {
         quote!(match ::std::primitive::str::parse(#str_exp) {
             Ok(value) => value,
-            Err(_) => return None,
+            Err(_) => return ::std::option::Option::None,
         })
     }
 
