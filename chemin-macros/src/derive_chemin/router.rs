@@ -96,6 +96,17 @@ impl Route {
                     continue;
                 }
 
+                if new_localized_route
+                    .locales
+                    .iter()
+                    .any(|locale| route.accepts_locale(locale))
+                {
+                    emit_error!(
+                        attr.tokens,
+                        "You cannot define multiple routes for the same locale"
+                    );
+                }
+
                 match route
                     .localized_routes
                     .iter_mut()
@@ -115,6 +126,12 @@ impl Route {
         }
 
         Ok(route)
+    }
+
+    fn accepts_locale(&self, locale: &str) -> bool {
+        self.localized_routes
+            .iter()
+            .any(|localized_route| localized_route.locales.contains(locale))
     }
 }
 
