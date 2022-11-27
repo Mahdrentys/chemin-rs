@@ -7,3 +7,9 @@ edition = "2021"
 
 [dependencies]
 chemin-macros = { path = "../chemin-macros" }
+once_cell = "1.16.0"
+route-recognizer = "0.3.1"
+smallvec = "1.10.0"
+
+[dev-dependencies]
+maplit = "1.0.2"
