@@ -18,7 +18,7 @@ pub trait Chemin: Sized {
         accepted_locales: &AcceptedLocales,
     ) -> Option<(Self, Vec<Locale>)>;
 
-    fn generate_url(&self, locale: &str) -> Option<String>;
+    fn generate_url(&self, locale: Option<&str>) -> Option<String>;
 }
 
 pub type Locale = &'static str;
@@ -164,5 +164,152 @@ fn test_accepted_locales_resulting_locales() {
         AcceptedLocales::Some(smallvec!["en", "fr"])
             .resulting_locales(&RouteLocales::Some(&["en", "es"])),
         vec!["en"],
+    );
+}
+
+#[test]
+fn test_derive() {
+    use maplit::hashset;
+    use std::collections::HashSet;
+
+    fn with_locales_vec_to_hashset(
+        value: Option<(Route, Vec<Locale>)>,
+    ) -> Option<(Route, HashSet<Locale>)> {
+        value.map(|(route, locales)| (route, HashSet::from_iter(locales)))
+    }
+
+    #[derive(Chemin, PartialEq, Eq, Debug)]
+    enum Route {
+        #[route("/")]
+        Home,
+
+        #[route("/hello")]
+        Hello,
+
+        #[route(en_US, en_UK => "/hello/:/")]
+        #[route(fr => "/bonjour/:/")]
+        HelloWithName(String),
+
+        #[route("/hello/:name/:age")]
+        HelloWithNameAndAge { name: String, age: u8 },
+
+        #[route(en, fr => "/with-sub-route/..")]
+        WithSubRoute(SubRoute),
+    }
+
+    #[derive(Chemin, PartialEq, Eq, Debug)]
+    enum SubRoute {
+        #[route("/home")]
+        Home,
+
+        #[route(fr_FR, fr => "/bonjour")]
+        Hello,
+    }
+
+    // Test parsing
+    assert_eq!(Route::parse(""), Some((Route::Home, vec![])));
+    assert_eq!(Route::parse("/"), Some((Route::Home, vec![])));
+
+    assert_eq!(Route::parse("/hello"), Some((Route::Hello, vec![])));
+    assert_eq!(Route::parse("/hello/"), None);
+
+    assert_eq!(Route::parse("/hello/john"), None);
+    assert_eq!(
+        with_locales_vec_to_hashset(Route::parse("/hello/john/")),
+        Some((
+            Route::HelloWithName(String::from("john")),
+            hashset!["en-US", "en-UK"],
+        ))
+    );
+    assert_eq!(Route::parse("/bonjour/john"), None);
+    assert_eq!(
+        Route::parse("/bonjour/john/"),
+        Some((Route::HelloWithName(String::from("john")), vec!["fr"])),
+    );
+
+    assert_eq!(Route::parse("/hello/john/invalid_age"), None);
+    assert_eq!(
+        Route::parse("/hello/john/30"),
+        Some((
+            Route::HelloWithNameAndAge {
+                name: String::from("john"),
+                age: 30,
+            },
+            vec![]
+        )),
+    );
+
+    assert_eq!(
+        with_locales_vec_to_hashset(Route::parse("/with-sub-route/home")),
+        Some((Route::WithSubRoute(SubRoute::Home), hashset!["en", "fr"])),
+    );
+    assert_eq!(Route::parse("/with-sub-route/bonjour/"), None);
+    assert_eq!(
+        Route::parse("/with-sub-route/bonjour"),
+        Some((Route::WithSubRoute(SubRoute::Hello), vec!["fr"])),
+    );
+
+    // Test url generation
+    assert_eq!(Route::Home.generate_url(None), Some(String::from("/")));
+    assert_eq!(
+        Route::Home.generate_url(Some("es")),
+        Some(String::from("/")),
+    );
+
+    assert_eq!(
+        Route::Hello.generate_url(None),
+        Some(String::from("/hello")),
+    );
+
+    assert_eq!(
+        Route::HelloWithName(String::from("John")).generate_url(Some("en-US")),
+        Some(String::from("/hello/John/")),
+    );
+    assert_eq!(
+        Route::HelloWithName(String::from("John")).generate_url(Some("en-UK")),
+        Some(String::from("/hello/John/")),
+    );
+    assert_eq!(
+        Route::HelloWithName(String::from("John")).generate_url(Some("fr")),
+        Some(String::from("/bonjour/John/")),
+    );
+    assert_eq!(
+        Route::HelloWithName(String::from("John")).generate_url(Some("en")),
+        None,
+    );
+    assert_eq!(
+        Route::HelloWithName(String::from("John")).generate_url(None),
+        None,
+    );
+
+    assert_eq!(
+        Route::HelloWithNameAndAge {
+            name: String::from("John"),
+            age: 30,
+        }
+        .generate_url(None),
+        Some(String::from("/hello/John/30")),
+    );
+
+    assert_eq!(Route::WithSubRoute(SubRoute::Home).generate_url(None), None,);
+    assert_eq!(
+        Route::WithSubRoute(SubRoute::Home).generate_url(Some("en")),
+        Some(String::from("/with-sub-route/home")),
+    );
+    assert_eq!(
+        Route::WithSubRoute(SubRoute::Hello).generate_url(Some("fr-FR")),
+        None,
+    );
+    assert_eq!(
+        Route::WithSubRoute(SubRoute::Hello).generate_url(Some("fr")),
+        Some(String::from("/with-sub-route/bonjour")),
+    );
+    assert_eq!(
+        Route::WithSubRoute(SubRoute::Hello).generate_url(Some("en")),
+        None,
+    );
+    assert_eq!(
+        Route::WithSubRoute(SubRoute::Hello).generate_url(None),
+        None,
     );
 }

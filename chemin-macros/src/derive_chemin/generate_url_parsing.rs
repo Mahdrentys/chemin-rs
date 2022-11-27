@@ -1,43 +1,61 @@
 use super::router::*;
 use super::unnamed_param_name;
-use proc_macro2::TokenStream;
-use quote::quote;
+use proc_macro2::{Span, TokenStream};
+use quote::{quote, quote_spanned};
 use std::iter;
 use syn::{Fields, Ident};
 
 static UNNAMED_SUB_ROUTE_NAME: &str = "sub_route";
 
 pub fn parsing_method(routes: &[Route], chemin_crate: &TokenStream) -> TokenStream {
-    let lazy_type = quote!(#chemin_crate::deps::once_cell::Lazy);
+    let lazy_type = quote!(#chemin_crate::deps::once_cell::sync::Lazy);
     let router_type = quote!(#chemin_crate::deps::route_recognizer::Router);
-    let params_type = quote!(#chemin_crate::deps::route_recognizer::Params);
 
-    let router_entries = router_entries(routes, chemin_crate);
+    let router_entries = router_entries(routes);
+    let route_handlers = route_handlers(routes, chemin_crate);
 
     quote!(
         fn parse_with_accepted_locales(
             url: &::std::primitive::str,
             accepted_locales: &#chemin_crate::AcceptedLocales,
         ) -> ::std::option::Option<(Self, ::std::vec::Vec<#chemin_crate::Locale>)> {
-            static ROUTER: #lazy_type<#router_type> = #lazy_type::new(|| {
-                let mut router:
-                    #router_type<
-                        fn(
-                            &#chemin_crate::AcceptedLocales,
-                            &#params_type
-                        ) -> ::std::option::Option<(Self, ::std::vec::Vec<#chemin_crate::Locale>)>
-                    >
-                    = #router_type::new();
-                #(#router_entries)*
+            static ROUTER: #lazy_type<#router_type<u32>> = #lazy_type::new(|| {
+                let mut router = #router_type::new();
+                #router_entries
                 router
             });
 
             match ROUTER.recognize(url) {
-                ::std::option::Option::Some(match_) => match_.handler()(accepted_locales, match_.params()),
-                ::std::option::Option::None => ::std::option::Option::None,
+                ::std::result::Result::Ok(match_) => {
+                    let params = match_.params();
+                    match *match_.handler() {
+                        #route_handlers
+                        _ => ::std::option::Option::None
+                    }
+                },
+
+                ::std::result::Result::Err(_) => ::std::option::Option::None,
             }
         }
     )
+}
+
+fn router_entries(routes: &[Route]) -> TokenStream {
+    let mut router_entries = quote!();
+    let mut i = 0u32;
+
+    for route in routes {
+        for localized_route in &route.localized_routes {
+            let route_recognizer_path = path_to_route_recognizer_path(&localized_route.path);
+            router_entries = quote!(
+                #router_entries
+                router.add(#route_recognizer_path, #i);
+            );
+            i += 1;
+        }
+    }
+
+    router_entries
 }
 
 fn path_to_route_recognizer_path(path: &Path) -> String {
@@ -78,29 +96,26 @@ fn path_to_route_recognizer_path(path: &Path) -> String {
     route_recognizer_path
 }
 
-fn router_entries<'a>(
-    routes: &'a [Route],
-    chemin_crate: &TokenStream,
-) -> impl Iterator<Item = TokenStream> + 'a {
-    routes.iter().flat_map({
-        let chemin_crate = chemin_crate.clone();
+fn route_handlers(routes: &[Route], chemin_crate: &TokenStream) -> TokenStream {
+    let mut route_handlers = quote!();
+    let mut i = 0u32;
 
-        move |route| {
-            route.localized_routes.iter().map({
-                let chemin_crate = chemin_crate.clone();
-                move |localized_route| router_entry(route, localized_route, &chemin_crate)
-            })
+    for route in routes {
+        for localized_route in &route.localized_routes {
+            let route_handler = route_handler(route, localized_route, chemin_crate);
+            route_handlers = quote!(#route_handlers #i => #route_handler,);
+            i += 1;
         }
-    })
+    }
+
+    route_handlers
 }
 
-fn router_entry(
+fn route_handler(
     route: &Route,
     localized_route: &LocalizedRoute,
     chemin_crate: &TokenStream,
 ) -> TokenStream {
-    let route_recognizer_path = path_to_route_recognizer_path(&localized_route.path);
-
     let route_locales = if localized_route.locales.is_empty() {
         quote!(#chemin_crate::RouteLocales::Any)
     } else {
@@ -109,7 +124,7 @@ fn router_entry(
     };
 
     let sub_route_parsing = match &localized_route.path.sub_route {
-        Some(sub_route) => sub_route_parsing(sub_route, chemin_crate),
+        Some(sub_route) => sub_route_parsing(localized_route, sub_route, chemin_crate),
         None => quote!(),
     };
 
@@ -118,34 +133,36 @@ fn router_entry(
     let resulting_locales = if localized_route.path.sub_route.is_some() {
         quote!(sub_route_resulting_locales)
     } else {
-        quote!(accepted_locales.resulting_locales(ROUTE_LOCALES))
+        quote!(accepted_locales.resulting_locales(&ROUTE_LOCALES))
     };
 
-    quote!(
-        router.add(#route_recognizer_path, |accepted_locales, params| {
-            static ROUTE_LOCALES: #chemin_crate::RouteLocales = #route_locales;
+    quote!({
+        static ROUTE_LOCALES: #chemin_crate::RouteLocales = #route_locales;
 
-            if accepted_locales.accept(ROUTE_LOCALES) {
-                #sub_route_parsing
-                (#route_variant_building, #resulting_locales)
-            } else {
-                ::std::option::Option::None
-            }
-        });
-    )
+        if accepted_locales.accept(&ROUTE_LOCALES) {
+            #sub_route_parsing
+            ::std::option::Option::Some((#route_variant_building, #resulting_locales))
+        } else {
+            ::std::option::Option::None
+        }
+    })
 }
 
-fn sub_route_parsing(sub_route: &SubRoute, chemin_crate: &TokenStream) -> TokenStream {
+fn sub_route_parsing(
+    localized_route: &LocalizedRoute,
+    sub_route: &SubRoute,
+    chemin_crate: &TokenStream,
+) -> TokenStream {
     let sub_route_param_name = match sub_route {
         SubRoute::Unnamed => UNNAMED_SUB_ROUTE_NAME,
         SubRoute::Named(name) => name,
     };
 
-    quote!(
+    quote_spanned!(localized_route.path.span=>
         let sub_route_path = params.find(#sub_route_param_name).unwrap();
-        let sub_route_accepted_locales = accepted_locales.accepted_locales_for_sub_route(ROUTE_LOCALES);
+        let sub_route_accepted_locales = accepted_locales.accepted_locales_for_sub_route(&ROUTE_LOCALES);
         let (sub_route, sub_route_resulting_locales) =
-            match #chemin_crate::Chemin::parse_with_accepted_locales(sub_route_path, sub_route_accepted_locales) {
+            match #chemin_crate::Chemin::parse_with_accepted_locales(sub_route_path, &sub_route_accepted_locales) {
                 ::std::option::Option::Some(value) => value,
                 ::std::option::Option::None => return ::std::option::Option::None,
             };
@@ -153,8 +170,8 @@ fn sub_route_parsing(sub_route: &SubRoute, chemin_crate: &TokenStream) -> TokenS
 }
 
 fn route_variant_building(route: &Route, localized_route: &LocalizedRoute) -> TokenStream {
-    fn parsing_code(str_exp: TokenStream) -> TokenStream {
-        quote!(match ::std::primitive::str::parse(#str_exp) {
+    fn parsing_code(str_exp: TokenStream, span: Span) -> TokenStream {
+        quote_spanned!(span=> match ::std::primitive::str::parse(#str_exp) {
             Ok(value) => value,
             Err(_) => return ::std::option::Option::None,
         })
@@ -168,7 +185,10 @@ fn route_variant_building(route: &Route, localized_route: &LocalizedRoute) -> To
                 .map(|param| param.unwrap())
                 .map(|param| {
                     let field_ident = Ident::new(param, localized_route.path.span);
-                    let parsing_code = parsing_code(quote!(params.find(#param).unwrap()));
+                    let parsing_code = parsing_code(
+                        quote!(params.find(#param).unwrap()),
+                        localized_route.path.span,
+                    );
                     quote!(#field_ident: #parsing_code)
                 })
                 .chain(match &localized_route.path.sub_route {
@@ -184,7 +204,7 @@ fn route_variant_building(route: &Route, localized_route: &LocalizedRoute) -> To
                     None => Box::new(iter::empty()) as Box<dyn Iterator<Item = _>>,
                 });
             let variant_ident = &route.variant.ident;
-            quote!(Self::#variant_ident { #(#fields),* })
+            quote_spanned!(localized_route.path.span=> Self::#variant_ident { #(#fields),* })
         }
 
         Fields::Unnamed(_) => {
@@ -194,7 +214,10 @@ fn route_variant_building(route: &Route, localized_route: &LocalizedRoute) -> To
                 .enumerate()
                 .map(|(i, _)| {
                     let param_name = unnamed_param_name(i);
-                    parsing_code(quote!(param.find(#param_name).unwrap()))
+                    parsing_code(
+                        quote!(params.find(#param_name).unwrap()),
+                        localized_route.path.span,
+                    )
                 })
                 .chain(match &localized_route.path.sub_route {
                     Some(sub_route) => match sub_route {
@@ -208,7 +231,7 @@ fn route_variant_building(route: &Route, localized_route: &LocalizedRoute) -> To
                     None => Box::new(iter::empty()) as Box<dyn Iterator<Item = _>>,
                 });
             let variant_ident = &route.variant.ident;
-            quote!(Self::#variant_ident(#(#fields),*))
+            quote_spanned!(localized_route.path.span=> Self::#variant_ident(#(#fields),*))
         }
 
         Fields::Unit => {

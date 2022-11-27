@@ -242,7 +242,7 @@ fn test_path_parsing() {
     );
 
     assert_eq!(
-        Path::parse_str("/hello/:name/:age/aaa/..rest/"),
+        Path::parse_str("/hello/:name/:age/aaa/..rest"),
         Ok(Path {
             components: vec![
                 PathComponent::Static(String::from("hello")),
@@ -251,7 +251,7 @@ fn test_path_parsing() {
                 PathComponent::Static(String::from("aaa")),
             ],
             sub_route: Some(SubRoute::Named(String::from("rest"))),
-            trailing_slash: true,
+            trailing_slash: false,
             span: Span::call_site(),
         })
     );
