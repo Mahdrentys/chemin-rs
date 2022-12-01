@@ -18,6 +18,7 @@ pub fn parsing_method(routes: &[Route], chemin_crate: &TokenStream) -> TokenStre
         fn parse_with_accepted_locales(
             url: &::std::primitive::str,
             accepted_locales: &#chemin_crate::AcceptedLocales,
+            decode_params: ::std::primitive::bool,
         ) -> ::std::option::Option<(Self, ::std::vec::Vec<#chemin_crate::Locale>)> {
             static ROUTER: #lazy_type<#router_type<u32>> = #lazy_type::new(|| {
                 let mut router = #router_type::new();
@@ -128,7 +129,7 @@ fn route_handler(
         None => quote!(),
     };
 
-    let route_variant_building = route_variant_building(route, localized_route);
+    let route_variant_building = route_variant_building(route, localized_route, chemin_crate);
 
     let resulting_locales = if localized_route.path.sub_route.is_some() {
         quote!(sub_route_resulting_locales)
@@ -162,18 +163,33 @@ fn sub_route_parsing(
         let sub_route_path = params.find(#sub_route_param_name).unwrap();
         let sub_route_accepted_locales = accepted_locales.accepted_locales_for_sub_route(&ROUTE_LOCALES);
         let (sub_route, sub_route_resulting_locales) =
-            match #chemin_crate::Chemin::parse_with_accepted_locales(sub_route_path, &sub_route_accepted_locales) {
+            match #chemin_crate::Chemin::parse_with_accepted_locales(sub_route_path, &sub_route_accepted_locales, decode_params) {
                 ::std::option::Option::Some(value) => value,
                 ::std::option::Option::None => return ::std::option::Option::None,
             };
     )
 }
 
-fn route_variant_building(route: &Route, localized_route: &LocalizedRoute) -> TokenStream {
-    fn parsing_code(str_exp: TokenStream, span: Span) -> TokenStream {
-        quote_spanned!(span=> match ::std::primitive::str::parse(#str_exp) {
-            Ok(value) => value,
-            Err(_) => return ::std::option::Option::None,
+fn route_variant_building(
+    route: &Route,
+    localized_route: &LocalizedRoute,
+    chemin_crate: &TokenStream,
+) -> TokenStream {
+    fn parsing_code(str_exp: TokenStream, span: Span, chemin_crate: &TokenStream) -> TokenStream {
+        quote_spanned!(span=> {
+            let value = if decode_params {
+                match #chemin_crate::decode_param(#str_exp) {
+                    Some(value) => value,
+                    None => return None,
+                }
+            } else {
+                ::std::borrow::Cow::Borrowed(#str_exp)
+            };
+
+            match ::std::primitive::str::parse(&value) {
+                Ok(value) => value,
+                Err(_) => return ::std::option::Option::None,
+            }
         })
     }
 
@@ -188,6 +204,7 @@ fn route_variant_building(route: &Route, localized_route: &LocalizedRoute) -> To
                     let parsing_code = parsing_code(
                         quote!(params.find(#param).unwrap()),
                         localized_route.path.span,
+                        chemin_crate,
                     );
                     quote!(#field_ident: #parsing_code)
                 })
@@ -217,6 +234,7 @@ fn route_variant_building(route: &Route, localized_route: &LocalizedRoute) -> To
                     parsing_code(
                         quote!(params.find(#param_name).unwrap()),
                         localized_route.path.span,
+                        chemin_crate,
                     )
                 })
                 .chain(match &localized_route.path.sub_route {
