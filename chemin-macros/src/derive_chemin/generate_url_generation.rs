@@ -13,6 +13,7 @@ pub fn url_generation_method(routes: &[Route], chemin_crate: &TokenStream) -> To
         fn generate_url(
             &self,
             __chemin_locale: ::std::option::Option<&::std::primitive::str>,
+            __chemin_encode_params: ::std::primitive::bool,
         ) -> ::std::option::Option<::std::string::String> {
             match self {
                 #(#route_match_arms),*
@@ -65,7 +66,8 @@ fn route_variant_pat(route: &Route) -> TokenStream {
 
 fn locale_match_arm(localized_route: &LocalizedRoute, chemin_crate: &TokenStream) -> TokenStream {
     let mut fmt_str = String::new();
-    let mut fmt_args = quote!();
+    let mut non_encoded_fmt_args = quote!();
+    let mut encoded_fmt_args = quote!();
     let mut param_i = 0usize;
 
     for path_component in &localized_route.path.components {
@@ -74,17 +76,18 @@ fn locale_match_arm(localized_route: &LocalizedRoute, chemin_crate: &TokenStream
         match path_component {
             PathComponent::Static(value) => fmt_str.push_str(value),
 
-            PathComponent::Param(Some(name)) => {
+            PathComponent::Param(optional_name) => {
                 fmt_str.push_str("{}");
-                let field_ident = Ident::new(name, localized_route.path.span);
-                fmt_args = quote!(#fmt_args #field_ident,);
-            }
 
-            PathComponent::Param(None) => {
-                fmt_str.push_str("{}");
-                let field_ident =
-                    Ident::new(&unnamed_param_name(param_i), localized_route.path.span);
-                fmt_args = quote!(#fmt_args #field_ident,);
+                let field_ident = match optional_name {
+                    Some(name) => Ident::new(name, localized_route.path.span),
+                    None => Ident::new(&unnamed_param_name(param_i), localized_route.path.span),
+                };
+
+                non_encoded_fmt_args = quote!(#non_encoded_fmt_args #field_ident,);
+                encoded_fmt_args =
+                    quote!(#encoded_fmt_args #chemin_crate::encode_param(#field_ident),);
+
                 param_i += 1;
             }
         }
@@ -101,13 +104,15 @@ fn locale_match_arm(localized_route: &LocalizedRoute, chemin_crate: &TokenStream
         };
 
         fmt_str.push_str("{}");
-        fmt_args = quote!(
-            #fmt_args
-            match #chemin_crate::Chemin::generate_url(#sub_route_ident, __chemin_locale) {
+
+        let sub_route_url_generation = quote!(
+            match #chemin_crate::Chemin::generate_url(#sub_route_ident, __chemin_locale, __chemin_encode_params) {
                 ::std::option::Option::Some(sub_url) => sub_url,
                 ::std::option::Option::None => return ::std::option::Option::None,
             }
         );
+        non_encoded_fmt_args = quote!(#non_encoded_fmt_args #sub_route_url_generation);
+        encoded_fmt_args = quote!(#encoded_fmt_args #sub_route_url_generation);
     }
 
     if localized_route.path.trailing_slash {
@@ -121,5 +126,11 @@ fn locale_match_arm(localized_route: &LocalizedRoute, chemin_crate: &TokenStream
         quote!(#(::std::option::Option::Some(#route_locales))|*)
     };
 
-    quote!(#match_arm_pat => ::std::option::Option::Some(format!(#fmt_str, #fmt_args)))
+    quote!(#match_arm_pat => ::std::option::Option::Some(
+        if __chemin_encode_params {
+            format!(#fmt_str, #encoded_fmt_args)
+        } else {
+            format!(#fmt_str, #non_encoded_fmt_args)
+        }
+    ))
 }
