@@ -16,9 +16,10 @@ pub fn parsing_method(routes: &[Route], chemin_crate: &TokenStream) -> TokenStre
 
     quote!(
         fn parse_with_accepted_locales(
-            url: &::std::primitive::str,
+            path: &::std::primitive::str,
             accepted_locales: &#chemin_crate::AcceptedLocales,
             decode_params: ::std::primitive::bool,
+            qstring: &#chemin_crate::deps::qstring::QString,
         ) -> ::std::option::Option<(Self, ::std::vec::Vec<#chemin_crate::Locale>)> {
             static ROUTER: #lazy_type<#router_type<u32>> = #lazy_type::new(|| {
                 let mut router = #router_type::new();
@@ -26,7 +27,7 @@ pub fn parsing_method(routes: &[Route], chemin_crate: &TokenStream) -> TokenStre
                 router
             });
 
-            match ROUTER.recognize(url) {
+            match ROUTER.recognize(path) {
                 ::std::result::Result::Ok(match_) => {
                     let params = match_.params();
                     match *match_.handler() {
@@ -163,7 +164,7 @@ fn sub_route_parsing(
         let sub_route_path = params.find(#sub_route_param_name).unwrap();
         let sub_route_accepted_locales = accepted_locales.accepted_locales_for_sub_route(&ROUTE_LOCALES);
         let (sub_route, sub_route_resulting_locales) =
-            match #chemin_crate::Chemin::parse_with_accepted_locales(sub_route_path, &sub_route_accepted_locales, decode_params) {
+            match #chemin_crate::Chemin::parse_with_accepted_locales(sub_route_path, &sub_route_accepted_locales, decode_params, qstring) {
                 ::std::option::Option::Some(value) => value,
                 ::std::option::Option::None => return ::std::option::Option::None,
             };
@@ -187,8 +188,8 @@ fn route_variant_building(
             };
 
             match ::std::primitive::str::parse(&value) {
-                Ok(value) => value,
-                Err(_) => return ::std::option::Option::None,
+                ::std::result::Result::Ok(value) => value,
+                ::std::result::Result::Err(_) => return ::std::option::Option::None,
             }
         })
     }
@@ -219,7 +220,40 @@ fn route_variant_building(
                     },
 
                     None => Box::new(iter::empty()) as Box<dyn Iterator<Item = _>>,
-                });
+                })
+                .chain(route.query_params.iter().map(|query_param| {
+                    match query_param {
+                        QueryParam::Mandatory(field_ident) => quote_spanned!(field_ident.span()=>
+                            #field_ident: match qstring.get(::std::stringify!(#field_ident)) {
+                                ::std::option::Option::Some(value) => match ::std::primitive::str::parse(value) {
+                                    ::std::result::Result::Ok(value) => value,
+                                    ::std::result::Result::Err(_) => return ::std::option::Option::None,
+                                },
+                                ::std::option::Option::None => return ::std::option::Option::None,
+                            }
+                        ),
+
+                        QueryParam::Optional(field_ident) => quote_spanned!(field_ident.span()=>
+                            #field_ident: match qstring.get(::std::stringify!(#field_ident)) {
+                                ::std::option::Option::Some(value) => match ::std::primitive::str::parse(value) {
+                                    ::std::result::Result::Ok(value) => ::std::option::Option::Some(value),
+                                    ::std::result::Result::Err(_) => return ::std::option::Option::None,
+                                },
+                                ::std::option::Option::None => ::std::option::Option::None,
+                            }
+                        ),
+
+                        QueryParam::WithDefaultValue(field_ident, default_value) => quote_spanned!(field_ident.span()=>
+                            #field_ident: match qstring.get(::std::stringify!(#field_ident)) {
+                                ::std::option::Option::Some(value) => match ::std::primitive::str::parse(value) {
+                                    ::std::result::Result::Ok(value) => value,
+                                    ::std::result::Result::Err(_) => return ::std::option::Option::None,
+                                },
+                                ::std::option::Option::None => #default_value,
+                            }
+                        ),
+                    }
+                }));
             let variant_ident = &route.variant.ident;
             quote_spanned!(localized_route.path.span=> Self::#variant_ident { #(#fields),* })
         }
