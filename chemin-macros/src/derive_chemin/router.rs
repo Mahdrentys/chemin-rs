@@ -118,8 +118,8 @@ fn validate_localized_route(
     variant: &Variant,
     span: Span,
 ) -> syn::Result<()> {
-    match variant.fields {
-        Fields::Named(_) => {
+    match &variant.fields {
+        Fields::Named(fields) => {
             if localized_route
                 .path
                 .contains_unnamed_params_and_sub_routes()
@@ -129,6 +129,27 @@ fn validate_localized_route(
                     "This route can only have named params and sub-routes, because this enum variant has named fields",
                 ))
             } else {
+                for field in &fields.named {
+                    let field_name = &field.ident.as_ref().unwrap().to_string();
+                    let field_is_named_param = localized_route.path.has_named_param(field_name);
+                    let field_is_sub_route = match &localized_route.path.sub_route {
+                        Some(SubRoute::Unnamed) => false,
+                        Some(SubRoute::Named(sub_route_name)) => sub_route_name == field_name,
+                        None => false,
+                    };
+                    let field_is_query_param = field
+                        .attrs
+                        .iter()
+                        .any(|attr| attr.path.is_ident("query_param"));
+
+                    if !field_is_named_param && !field_is_sub_route && !field_is_query_param {
+                        return Err(Error::new(
+                            field.ident.span(),
+                            "This field is neither a param, nor a sub-route, nor a query param",
+                        ));
+                    }
+                }
+
                 Ok(())
             }
         }
