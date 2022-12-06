@@ -1,3 +1,6 @@
+/// To derive the [Chemin] trait.
+///
+/// To learn how to use it, see [the root of the documentation](index.html).
 pub use chemin_macros::Chemin;
 
 use percent_encoding::AsciiSet;
@@ -13,7 +16,24 @@ pub mod deps {
     pub use route_recognizer;
 }
 
+/// Trait to derive to build a enum-based router.
+///
+/// This trait is not meant to be implemented directly (although you can). To learn how to derive it, see
+/// [the root of the documentation](index.html).
 pub trait Chemin: Sized {
+    /// Parses an url to obtain a route.
+    ///
+    /// The `url` can contain a query string.
+    ///
+    /// If the `decode_params` argument is `true`, url parameters will be percent-decoded
+    /// (see <https://www.w3schools.com/tags/ref_urlencode.ASP>). However, the query string parameters will always be percent-decoded,
+    /// regardless of the `decode_params` argument. Additionally, the character "+" will be converted to a space (" ") for query string
+    /// parameters.
+    ///
+    /// If the provided url doesn't correspond to any route, or if some parameter or query string argument failed to parse, this
+    /// function returns [None]. If not, this function returns a tuple wrapped in [Some], whose first field is the obtained route, and
+    /// whose second field is a list of the locales corresponding to this route. Most of the time, it is only one locale, or zero if
+    /// no locale was defined for this route.
     fn parse(url: &str, decode_params: bool) -> Option<(Self, Vec<Locale>)> {
         let mut split = url.split('?').peekable();
         let path = split.next()?;
@@ -34,6 +54,7 @@ pub trait Chemin: Sized {
         Self::parse_with_accepted_locales(path, &AcceptedLocales::Any, decode_params, &qstring)
     }
 
+    /// This function is not meant to be called directly. It is used internally by [Chemin::parse].
     fn parse_with_accepted_locales(
         path: &str,
         accepted_locales: &AcceptedLocales,
@@ -41,6 +62,18 @@ pub trait Chemin: Sized {
         qstring: &QString,
     ) -> Option<(Self, Vec<Locale>)>;
 
+    /// Generates a url from a route.
+    ///
+    /// The `locale` argument has to be [Some] when using i18n, because the locale for which the url is generated has to be known. If
+    /// this route is not specific to a locale, it can be [None]. It is a standard locale code, such as used with
+    /// <https://developer.mozilla.org/en-US/docs/Web/API/Navigator/language>.
+    ///
+    /// If the `encode_params` argument is `true`, url parameters will be percent-encoded
+    /// (see <https://www.w3schools.com/tags/ref_urlencode.ASP>). All non-alphanumeric characters except "-", "_", "." and "~" will be
+    /// encoded. However, the query string parameters will always be percent-encoded, regardless of the `encode_params` argument.
+    /// Additionally, the space character (" ") will be displayed as a "+" in query string parameters.
+    ///
+    /// If this route is not defined for the provided `locale`, then this method will return [None].
     fn generate_url(&self, locale: Option<&str>, encode_params: bool) -> Option<String> {
         let mut qstring = QString::default();
 
@@ -56,6 +89,7 @@ pub trait Chemin: Sized {
             })
     }
 
+    /// This method is not meant to be called directly. It is used internally by [Chemin::generate_url].
     fn generate_url_and_build_qstring(
         &self,
         locale: Option<&str>,
@@ -64,6 +98,9 @@ pub trait Chemin: Sized {
     ) -> Option<String>;
 }
 
+/// A standard locale code, such as used with <https://developer.mozilla.org/en-US/docs/Web/API/Navigator/language>.
+///
+/// Examples: `"en"`, `"en-US"`, `"fr"`, `"fr-FR"`, `"es-ES"`.
 pub type Locale = &'static str;
 
 #[doc(hidden)]
