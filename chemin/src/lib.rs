@@ -50,7 +50,7 @@ pub trait Chemin: Sized {
                     value
                 } else {
                     value.push('?');
-                    value.push_str(&qstring.to_string().replace("%20", "+"));
+                    value.push_str(&qstring.to_string().replace('+', "%2B").replace("%20", "+"));
                     value
                 }
             })
@@ -350,13 +350,13 @@ fn test_derive() {
     );
     assert_eq!(
         Route::parse(
-            "/with-named-sub-route/with-params?optional_param=optional+value&mandatory_param=value&param_with_default_value=default+value",
+            "/with-named-sub-route/with-params?optional_param=optional%2Bvalue&mandatory_param=value&param_with_default_value=default+value",
             false
         ),
         Some((
             Route::WithNamedSubRoute {
                 sub_route: SubRoute::WithParams {
-                    optional_param: Some(String::from("optional value")),
+                    optional_param: Some(String::from("optional+value")),
                     param_with_default_value: String::from("default value"),
                 },
                 mandatory_param: String::from("value"),
@@ -455,14 +455,14 @@ fn test_derive() {
     assert_eq!(
         Route::WithNamedSubRoute {
             sub_route: SubRoute::WithParams {
-                optional_param: Some(String::from("optional param")),
-                param_with_default_value: String::from("default value"),
+                optional_param: Some(String::from("optional+param")),
+                param_with_default_value: String::from("default&value"),
             },
             mandatory_param: String::from("mandatory param"),
         }
         .generate_url(Some("en"), false),
         Some(String::from(
-            "/with-named-sub-route/with-params?mandatory_param=mandatory+param&optional_param=optional+param&param_with_default_value=default+value"
+            "/with-named-sub-route/with-params?mandatory_param=mandatory+param&optional_param=optional%2Bparam&param_with_default_value=default%26value"
         ))
     );
 }
