@@ -1,6 +1,7 @@
 pub use chemin_macros::Chemin;
 
 use percent_encoding::AsciiSet;
+use qstring::QString;
 use smallvec::{SmallVec, ToSmallVec};
 use std::borrow::Cow;
 use std::fmt::Display;
@@ -8,21 +9,59 @@ use std::fmt::Display;
 #[doc(hidden)]
 pub mod deps {
     pub use once_cell;
+    pub use qstring;
     pub use route_recognizer;
 }
 
 pub trait Chemin: Sized {
     fn parse(url: &str, decode_params: bool) -> Option<(Self, Vec<Locale>)> {
-        Self::parse_with_accepted_locales(url, &AcceptedLocales::Any, decode_params)
+        let mut split = url.split('?').peekable();
+        let path = split.next()?;
+
+        let qstring = if split.peek().is_none() {
+            QString::default()
+        } else {
+            let qstring = split
+                .fold(String::new(), |mut qstring, fragment| {
+                    qstring.push('?');
+                    qstring.push_str(fragment);
+                    qstring
+                })
+                .replace('+', "%20");
+            QString::from(&qstring[..])
+        };
+
+        Self::parse_with_accepted_locales(path, &AcceptedLocales::Any, decode_params, &qstring)
     }
 
     fn parse_with_accepted_locales(
-        url: &str,
+        path: &str,
         accepted_locales: &AcceptedLocales,
         decode_params: bool,
+        qstring: &QString,
     ) -> Option<(Self, Vec<Locale>)>;
 
-    fn generate_url(&self, locale: Option<&str>, encode_params: bool) -> Option<String>;
+    fn generate_url(&self, locale: Option<&str>, encode_params: bool) -> Option<String> {
+        let mut qstring = QString::default();
+
+        self.generate_url_and_build_qstring(locale, encode_params, &mut qstring)
+            .map(|mut value| {
+                if qstring.is_empty() {
+                    value
+                } else {
+                    value.push('?');
+                    value.push_str(&qstring.to_string().replace("%20", "+"));
+                    value
+                }
+            })
+    }
+
+    fn generate_url_and_build_qstring(
+        &self,
+        locale: Option<&str>,
+        encode_params: bool,
+        qstring: &mut QString,
+    ) -> Option<String>;
 }
 
 pub type Locale = &'static str;
@@ -216,6 +255,13 @@ fn test_derive() {
 
         #[route(en, fr => "/with-sub-route/..")]
         WithSubRoute(SubRoute),
+
+        #[route("/with-named-sub-route/..sub_route")]
+        WithNamedSubRoute {
+            sub_route: SubRoute,
+            #[query_param]
+            mandatory_param: String,
+        },
     }
 
     #[derive(Chemin, PartialEq, Eq, Debug)]
@@ -225,6 +271,14 @@ fn test_derive() {
 
         #[route(fr_FR, fr => "/bonjour")]
         Hello,
+
+        #[route("/with-params")]
+        WithParams {
+            #[query_param(optional)]
+            optional_param: Option<String>,
+            #[query_param(default = String::from("default"))]
+            param_with_default_value: String,
+        },
     }
 
     // Test parsing
@@ -272,6 +326,43 @@ fn test_derive() {
     assert_eq!(
         Route::parse("/with-sub-route/bonjour", false),
         Some((Route::WithSubRoute(SubRoute::Hello), vec!["fr"])),
+    );
+
+    assert_eq!(
+        Route::parse("/with-named-sub-route/with-params", false),
+        None,
+    );
+    assert_eq!(
+        Route::parse(
+            "/with-named-sub-route/with-params?mandatory_param=value%20value+value",
+            false
+        ),
+        Some((
+            Route::WithNamedSubRoute {
+                sub_route: SubRoute::WithParams {
+                    optional_param: None,
+                    param_with_default_value: String::from("default"),
+                },
+                mandatory_param: String::from("value value value"),
+            },
+            vec![]
+        )),
+    );
+    assert_eq!(
+        Route::parse(
+            "/with-named-sub-route/with-params?optional_param=optional+value&mandatory_param=value&param_with_default_value=default+value",
+            false
+        ),
+        Some((
+            Route::WithNamedSubRoute {
+                sub_route: SubRoute::WithParams {
+                    optional_param: Some(String::from("optional value")),
+                    param_with_default_value: String::from("default value"),
+                },
+                mandatory_param: String::from("value"),
+            },
+            vec![]
+        )),
     );
 
     // Test url generation
@@ -346,5 +437,32 @@ fn test_derive() {
     assert_eq!(
         Route::WithSubRoute(SubRoute::Hello).generate_url(None, false),
         None,
+    );
+
+    assert_eq!(
+        Route::WithNamedSubRoute {
+            sub_route: SubRoute::WithParams {
+                optional_param: None,
+                param_with_default_value: String::from("default"),
+            },
+            mandatory_param: String::from("mandatory param"),
+        }
+        .generate_url(Some("en"), false),
+        Some(String::from(
+            "/with-named-sub-route/with-params?mandatory_param=mandatory+param"
+        ))
+    );
+    assert_eq!(
+        Route::WithNamedSubRoute {
+            sub_route: SubRoute::WithParams {
+                optional_param: Some(String::from("optional param")),
+                param_with_default_value: String::from("default value"),
+            },
+            mandatory_param: String::from("mandatory param"),
+        }
+        .generate_url(Some("en"), false),
+        Some(String::from(
+            "/with-named-sub-route/with-params?mandatory_param=mandatory+param&optional_param=optional+param&param_with_default_value=default+value"
+        ))
     );
 }

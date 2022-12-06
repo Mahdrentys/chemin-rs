@@ -1,7 +1,7 @@
 use super::router::*;
 use super::unnamed_param_name;
 use proc_macro2::{Span, TokenStream};
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::{Fields, Ident};
 
 pub fn url_generation_method(routes: &[Route], chemin_crate: &TokenStream) -> TokenStream {
@@ -10,10 +10,11 @@ pub fn url_generation_method(routes: &[Route], chemin_crate: &TokenStream) -> To
         .map(|route| route_match_arm(route, chemin_crate));
 
     quote!(
-        fn generate_url(
+        fn generate_url_and_build_qstring(
             &self,
             __chemin_locale: ::std::option::Option<&::std::primitive::str>,
             __chemin_encode_params: ::std::primitive::bool,
+            __chemin_qstring: &mut #chemin_crate::deps::qstring::QString,
         ) -> ::std::option::Option<::std::string::String> {
             match self {
                 #(#route_match_arms),*
@@ -30,9 +31,45 @@ fn route_match_arm(route: &Route, chemin_crate: &TokenStream) -> TokenStream {
         .iter()
         .map(|localized_route| locale_match_arm(localized_route, chemin_crate));
 
-    quote!(#route_variant_pat => match __chemin_locale {
-        #(#locale_match_arms,)*
-        _ => ::std::option::Option::None,
+    let qstring_pairs_adding = route
+        .query_params
+        .iter()
+        .map(|query_param| match query_param {
+            QueryParam::Mandatory(field_ident) => quote_spanned!(field_ident.span()=>
+                __chemin_qstring.add_pair((
+                    ::std::stringify!(#field_ident),
+                    ::std::string::ToString::to_string(&#field_ident)
+                ));
+            ),
+
+            QueryParam::Optional(field_ident) => quote_spanned!(field_ident.span()=>
+                if let ::std::option::Option::Some(value) = #field_ident {
+                    __chemin_qstring.add_pair((
+                        ::std::stringify!(#field_ident),
+                        ::std::string::ToString::to_string(&value)
+                    ))
+                }
+            ),
+
+            QueryParam::WithDefaultValue(field_ident, default_value) => {
+                quote_spanned!(field_ident.span()=>
+                    if #field_ident != &#default_value {
+                        __chemin_qstring.add_pair((
+                            ::std::stringify!(#field_ident),
+                            ::std::string::ToString::to_string(&#field_ident)
+                        ));
+                    }
+                )
+            }
+        });
+
+    quote!(#route_variant_pat => {
+        #(#qstring_pairs_adding)*
+
+        match __chemin_locale {
+            #(#locale_match_arms,)*
+            _ => ::std::option::Option::None,
+        }
     })
 }
 
@@ -106,7 +143,12 @@ fn locale_match_arm(localized_route: &LocalizedRoute, chemin_crate: &TokenStream
         fmt_str.push_str("{}");
 
         let sub_route_url_generation = quote!(
-            match #chemin_crate::Chemin::generate_url(#sub_route_ident, __chemin_locale, __chemin_encode_params) {
+            match #chemin_crate::Chemin::generate_url_and_build_qstring(
+                #sub_route_ident,
+                __chemin_locale,
+                __chemin_encode_params,
+                __chemin_qstring,
+            ) {
                 ::std::option::Option::Some(sub_url) => sub_url,
                 ::std::option::Option::None => return ::std::option::Option::None,
             }

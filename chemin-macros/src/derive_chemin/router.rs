@@ -1,10 +1,13 @@
 mod localized_route;
 pub use localized_route::*;
+use quote::ToTokens;
 
+use crate::helpers;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
+use syn::parse::{Parse, ParseBuffer};
 use syn::spanned::Spanned;
-use syn::{Error, Fields, ItemEnum, Variant};
+use syn::{parenthesized, Error, Expr, Fields, Ident, ItemEnum, Token, Variant};
 
 pub struct Router {
     pub item_enum: ItemEnum,
@@ -29,60 +32,15 @@ impl Router {
 pub struct Route {
     pub variant: Variant,
     pub localized_routes: Vec<LocalizedRoute>,
+    pub query_params: Vec<QueryParam>,
 }
 
 impl Route {
     fn from_variant(variant: &Variant) -> syn::Result<Self> {
-        fn validate_localized_route(
-            localized_route: &LocalizedRoute,
-            variant: &Variant,
-            span: Span,
-        ) -> syn::Result<()> {
-            match variant.fields {
-                Fields::Named(_) => {
-                    if localized_route
-                        .path
-                        .contains_unnamed_params_and_sub_routes()
-                    {
-                        Err(Error::new(
-                            span,
-                            "This route can only have named params and sub-routes, because this enum variant has named fields",
-                        ))
-                    } else {
-                        Ok(())
-                    }
-                }
-
-                Fields::Unit | Fields::Unnamed(_) => {
-                    if localized_route.path.contains_named_params_and_sub_routes() {
-                        Err(Error::new(
-                            span,
-                            "This route can only have unnamed params and sub-routes, because this enum variant has unnamed fields",
-                        ))
-                    } else {
-                        let number_of_params_and_sub_routes = localized_route.path.params().count()
-                            + localized_route.path.sub_route.is_some() as usize;
-
-                        if number_of_params_and_sub_routes == variant.fields.len() {
-                            Ok(())
-                        } else {
-                            Err(Error::new(
-                                span,
-                                format!(
-                                    "This route has {} unnamed params and sub-routes, but this enum variant has {} fields",
-                                    number_of_params_and_sub_routes,
-                                    variant.fields.len(),
-                                ),
-                            ))
-                        }
-                    }
-                }
-            }
-        }
-
         let mut route = Route {
             variant: variant.clone(),
             localized_routes: Vec::new(),
+            query_params: Vec::new(),
         };
 
         for attr in &variant.attrs {
@@ -115,6 +73,29 @@ impl Route {
             }
         }
 
+        for field in &variant.fields {
+            if let Some(attr) = field
+                .attrs
+                .iter()
+                .find(|attr| attr.path.is_ident("query_param"))
+            {
+                match &field.ident {
+                    Some(field_ident) => {
+                        let mut token_stream_to_parse = field_ident.into_token_stream();
+                        token_stream_to_parse.extend(attr.tokens.clone().into_iter());
+                        route.query_params.push(syn::parse2(token_stream_to_parse)?);
+                    }
+
+                    None => {
+                        return Err(Error::new(
+                            attr.path.span(),
+                            "Only named fields can be query string parameters",
+                        ))
+                    }
+                }
+            }
+        }
+
         if route.localized_routes.is_empty() {
             return Err(Error::new(
                 variant.span(),
@@ -129,6 +110,90 @@ impl Route {
         self.localized_routes
             .iter()
             .any(|localized_route| localized_route.locales.contains(locale))
+    }
+}
+
+fn validate_localized_route(
+    localized_route: &LocalizedRoute,
+    variant: &Variant,
+    span: Span,
+) -> syn::Result<()> {
+    match variant.fields {
+        Fields::Named(_) => {
+            if localized_route
+                .path
+                .contains_unnamed_params_and_sub_routes()
+            {
+                Err(Error::new(
+                    span,
+                    "This route can only have named params and sub-routes, because this enum variant has named fields",
+                ))
+            } else {
+                Ok(())
+            }
+        }
+
+        Fields::Unit | Fields::Unnamed(_) => {
+            if localized_route.path.contains_named_params_and_sub_routes() {
+                Err(Error::new(
+                    span,
+                    "This route can only have unnamed params and sub-routes, because this enum variant has unnamed fields",
+                ))
+            } else {
+                let number_of_params_and_sub_routes = localized_route.path.params().count()
+                    + localized_route.path.sub_route.is_some() as usize;
+
+                if number_of_params_and_sub_routes == variant.fields.len() {
+                    Ok(())
+                } else {
+                    Err(Error::new(
+                        span,
+                        format!(
+                            "This route has {} unnamed params and sub-routes, but this enum variant has {} fields",
+                            number_of_params_and_sub_routes,
+                            variant.fields.len(),
+                        ),
+                    ))
+                }
+            }
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum QueryParam {
+    Mandatory(Ident),
+    Optional(Ident),
+    WithDefaultValue(Ident, Expr),
+}
+
+impl Parse for QueryParam {
+    fn parse(input: &ParseBuffer) -> syn::Result<Self> {
+        let field_ident: Ident = input.parse()?;
+
+        if input.is_empty() {
+            Ok(Self::Mandatory(field_ident))
+        } else {
+            let content;
+            parenthesized!(content in input);
+            helpers::parse_eos(input)?;
+            let ident: Ident = content.parse()?;
+
+            if ident == "optional" {
+                helpers::parse_eos(&content)?;
+                Ok(Self::Optional(field_ident))
+            } else if ident == "default" {
+                content.parse::<Token![=]>()?;
+                let default_value = content.parse()?;
+                helpers::parse_eos(&content)?;
+                Ok(Self::WithDefaultValue(field_ident, default_value))
+            } else {
+                Err(Error::new(
+                    ident.span(),
+                    "Expected `optional` or `default = ...`",
+                ))
+            }
+        }
     }
 }
 
@@ -150,13 +215,24 @@ fn test_parsing() {
                 Hello(String),
 
                 #[route("/hello/:name/:age")]
-                HelloWithNamedFields { name: String, age: u8 },
+                HelloWithNamedFields {
+                    name: String,
+                    age: u8,
+                    #[query_param]
+                    param: String,
+                },
 
                 #[route("/hello/:/..")]
                 HelloSubRoute(String, SubRoute),
 
                 #[route("/hello/:name/..sub_route")]
-                HelloSubRouteWithNamedFields { name: String, sub_route: SubRoute },
+                HelloSubRouteWithNamedFields {
+                    #[query_param(default = String::from("default"))]
+                    name: String,
+                    sub_route: SubRoute,
+                    #[query_param(optional)]
+                    param: Option<String>,
+                },
             }
         ))
         .unwrap()
@@ -177,6 +253,7 @@ fn test_parsing() {
                     },
                     locales: hashset![],
                 }],
+                query_params: vec![],
             },
             Route {
                 variant: syn::parse2(quote!(
@@ -229,13 +306,16 @@ fn test_parsing() {
                         locales: hashset![String::from("en-US"),],
                     },
                 ],
+                query_params: vec![],
             },
             Route {
                 variant: syn::parse2(quote!(
                     #[route("/hello/:name/:age")]
                     HelloWithNamedFields {
                         name: String,
-                        age: u8
+                        age: u8,
+                        #[query_param]
+                        param: String,
                     }
                 ))
                 .unwrap(),
@@ -252,6 +332,10 @@ fn test_parsing() {
                     },
                     locales: hashset![],
                 }],
+                query_params: vec![QueryParam::Mandatory(Ident::new(
+                    "param",
+                    Span::call_site()
+                ))],
             },
             Route {
                 variant: syn::parse2(quote!(
@@ -271,13 +355,17 @@ fn test_parsing() {
                     },
                     locales: hashset![],
                 }],
+                query_params: vec![],
             },
             Route {
                 variant: syn::parse2(quote!(
                     #[route("/hello/:name/..sub_route")]
                     HelloSubRouteWithNamedFields {
+                        #[query_param(default = String::from("default"))]
                         name: String,
-                        sub_route: SubRoute
+                        sub_route: SubRoute,
+                        #[query_param(optional)]
+                        param: Option<String>,
                     }
                 ))
                 .unwrap(),
@@ -293,6 +381,13 @@ fn test_parsing() {
                     },
                     locales: hashset![],
                 }],
+                query_params: vec![
+                    QueryParam::WithDefaultValue(
+                        Ident::new("name", Span::call_site()),
+                        syn::parse2(quote!(String::from("default"))).unwrap()
+                    ),
+                    QueryParam::Optional(Ident::new("param", Span::call_site()))
+                ],
             },
         ]
     );

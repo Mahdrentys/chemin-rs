@@ -18,7 +18,7 @@ fn chemin_crate() -> proc_macro2::TokenStream {
     }
 }
 
-#[proc_macro_derive(Chemin, attributes(route))]
+#[proc_macro_derive(Chemin, attributes(route, query_param))]
 pub fn derive_chemin(item: TokenStream) -> TokenStream {
     derive_chemin::derive_chemin(item.into(), &chemin_crate()).into()
 }
