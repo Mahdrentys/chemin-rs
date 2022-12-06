@@ -95,6 +95,16 @@ impl Path {
             })
             .map(|param| param.as_ref())
     }
+
+    pub fn has_named_param(&self, expected_name: &str) -> bool {
+        self.components
+            .iter()
+            .any(|path_component| match path_component {
+                PathComponent::Static(_) => false,
+                PathComponent::Param(None) => false,
+                PathComponent::Param(Some(name)) => name == expected_name,
+            })
+    }
 }
 
 impl Parse for Path {
