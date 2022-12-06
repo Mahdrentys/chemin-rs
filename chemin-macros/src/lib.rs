@@ -2,7 +2,6 @@ mod derive_chemin;
 mod helpers;
 
 use proc_macro::TokenStream;
-use proc_macro_error::proc_macro_error;
 
 fn chemin_crate() -> proc_macro2::TokenStream {
     use proc_macro2::{Ident, Span};
@@ -20,7 +19,6 @@ fn chemin_crate() -> proc_macro2::TokenStream {
 }
 
 #[proc_macro_derive(Chemin, attributes(route))]
-#[proc_macro_error]
 pub fn derive_chemin(item: TokenStream) -> TokenStream {
     derive_chemin::derive_chemin(item.into(), &chemin_crate()).into()
 }

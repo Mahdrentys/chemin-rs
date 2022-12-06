@@ -3,9 +3,8 @@ pub use localized_route::*;
 
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
-use proc_macro_error::abort;
 use syn::spanned::Spanned;
-use syn::{Fields, ItemEnum, Variant};
+use syn::{Error, Fields, ItemEnum, Variant};
 
 pub struct Router {
     pub item_enum: ItemEnum,
@@ -38,37 +37,43 @@ impl Route {
             localized_route: &LocalizedRoute,
             variant: &Variant,
             span: Span,
-        ) {
+        ) -> syn::Result<()> {
             match variant.fields {
                 Fields::Named(_) => {
                     if localized_route
                         .path
                         .contains_unnamed_params_and_sub_routes()
                     {
-                        abort!(
+                        Err(Error::new(
                             span,
-                            "This route can only have named params and sub-routes, because this enum variant has named fields"
-                        );
+                            "This route can only have named params and sub-routes, because this enum variant has named fields",
+                        ))
+                    } else {
+                        Ok(())
                     }
                 }
 
                 Fields::Unit | Fields::Unnamed(_) => {
                     if localized_route.path.contains_named_params_and_sub_routes() {
-                        abort!(
+                        Err(Error::new(
                             span,
-                            "This route can only have unnamed params and sub-routes, because this enum variant has unnamed fields"
-                        );
+                            "This route can only have unnamed params and sub-routes, because this enum variant has unnamed fields",
+                        ))
                     } else {
                         let number_of_params_and_sub_routes = localized_route.path.params().count()
                             + localized_route.path.sub_route.is_some() as usize;
 
-                        if number_of_params_and_sub_routes != variant.fields.len() {
-                            abort!(
+                        if number_of_params_and_sub_routes == variant.fields.len() {
+                            Ok(())
+                        } else {
+                            Err(Error::new(
                                 span,
-                                "This route has {} unnamed params and sub-routes, but this enum variant has {} fields",
-                                number_of_params_and_sub_routes,
-                                variant.fields.len(),
-                            );
+                                format!(
+                                    "This route has {} unnamed params and sub-routes, but this enum variant has {} fields",
+                                    number_of_params_and_sub_routes,
+                                    variant.fields.len(),
+                                ),
+                            ))
                         }
                     }
                 }
@@ -83,17 +88,17 @@ impl Route {
         for attr in &variant.attrs {
             if attr.path.is_ident("route") {
                 let new_localized_route: LocalizedRoute = syn::parse2(attr.tokens.clone())?;
-                validate_localized_route(&new_localized_route, variant, attr.tokens.span());
+                validate_localized_route(&new_localized_route, variant, attr.tokens.span())?;
 
                 if new_localized_route
                     .locales
                     .iter()
                     .any(|locale| route.accepts_locale(locale))
                 {
-                    abort!(
-                        attr.tokens,
-                        "You cannot define multiple routes for the same locale"
-                    );
+                    return Err(Error::new(
+                        attr.tokens.span(),
+                        "You cannot define multiple routes for the same locale",
+                    ));
                 }
 
                 match route
@@ -111,7 +116,10 @@ impl Route {
         }
 
         if route.localized_routes.is_empty() {
-            abort!(variant, "Every variant must have at least one route");
+            return Err(Error::new(
+                variant.span(),
+                "Every variant must have at least one route",
+            ));
         }
 
         Ok(route)

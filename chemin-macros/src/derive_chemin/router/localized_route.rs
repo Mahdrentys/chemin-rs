@@ -3,12 +3,11 @@ use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
 use proc_macro2::Span;
-use proc_macro_error::emit_error;
 use std::collections::HashSet;
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseBuffer};
 use syn::punctuated::Punctuated;
-use syn::{parenthesized, Ident, LitStr, Token};
+use syn::{parenthesized, Error, Ident, LitStr, Token};
 
 #[derive(PartialEq, Eq, Debug)]
 pub struct LocalizedRoute {
@@ -107,15 +106,7 @@ impl Parse for Path {
                 path.span = path_lit.span();
                 Ok(path)
             }
-            Err(error) => {
-                emit_error!(path_lit, "{}", error);
-                Ok(Self {
-                    components: Vec::new(),
-                    sub_route: None,
-                    trailing_slash: false,
-                    span: path_lit.span(),
-                })
-            }
+            Err(error) => Err(Error::new(path_lit.span(), error)),
         }
     }
 }
