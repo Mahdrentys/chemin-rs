@@ -9,7 +9,7 @@ fn chemin_crate() -> proc_macro2::TokenStream {
     use quote::quote;
 
     match proc_macro_crate::crate_name("chemin").unwrap() {
-        FoundCrate::Itself => quote!(crate),
+        FoundCrate::Itself => quote!(::chemin),
 
         FoundCrate::Name(name) => {
             let ident = Ident::new(&name, Span::call_site());

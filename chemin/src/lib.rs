@@ -1,3 +1,365 @@
+//! Chemin is an enum-based router generator, supporting query strings and i18n. It can be used on front-end or back-end, with any
+//! framework or library. It can be used both ways: to parse a url into a route, and to generate a url from a route you constructed.
+//!
+//! It is not meant to be "blazingly fast": in this crate, code clarity is always privileged over optimization.
+//!
+//! ## Basic usage
+//!
+//! You just have to define your routes as different variant of an enum, derive the [Chemin] trait and that's it.
+//!
+//! ```
+//! use chemin::Chemin;
+//!
+//! // `PartialEq`, `Eq` and `Debug` are not necessary to derive `Chemin`, but here they are used to be able to use `assert_eq`.
+//! ##[derive(Chemin, PartialEq, Eq, Debug)]
+//! enum Route {
+//!     ##[route("/")]
+//!     Home,
+//!
+//!     /// If there is a trailing slash at the end (example: #[route("/about/")]), it is considered
+//!     /// a different route than without the trailing slash.
+//!     ##[route("/about")]
+//!     About,
+//!
+//!     /// The character ":" is used for dynamic parameters.
+//!     /// The type of the parameter (in this case `String`), must implement `FromStr` and `Display`.
+//!     ##[route("/hello/:")]
+//!     Hello(String),
+//!
+//!     /// You can use named fields by giving a name to the parameters (after ":").
+//!     ##[route("/hello/:name/:age")]
+//!     HelloWithAge {
+//!         name: String,
+//!         age: u8
+//!     }
+//! }
+//!
+//! // Url parsing:
+//! let decode_params = true; // Whether or not to percent-decode url parameters (see `Chemin::parse` for documentation).
+//! // `vec![]` is the list of the locales for this route. As we don't use i18n for this router yet, it is therefore empty.
+//! assert_eq!(Route::parse("/", decode_params), Some((Route::Home, vec![])));
+//! assert_eq!(Route::parse("/about", decode_params), Some((Route::About, vec![])));
+//! assert_eq!(Route::parse("/about/", decode_params), None); // Route not found because of the trailing slash
+//! assert_eq!(Route::parse("/hello/John", decode_params), Some((Route::Hello(String::from("John")), vec![])));
+//! assert_eq!(
+//!     Route::parse("/hello/John%20Doe/30", decode_params),
+//!     Some((
+//!         Route::HelloWithAge {
+//!             name: String::from("John Doe"),
+//!             age: 30,
+//!         },
+//!         vec![],
+//!     ))
+//! );
+//!
+//! // Url generation
+//! let encode_params = true; // Whether or not to percent-encode url parameters (see `Chemin::generate_url` for documentation).
+//! let locale = None; // The locale for which to generate the url. For now, we don't use i18n yet, so it is `None`.
+//! assert_eq!(Route::Home.generate_url(locale, encode_params), Some(String::from("/"))); // The result is guaranteed to be `Some` if we don't use i18n.
+//! assert_eq!(Route::About.generate_url(locale, encode_params), Some(String::from("/about")));
+//! assert_eq!(Route::Hello(String::from("John")).generate_url(locale, encode_params), Some(String::from("/hello/John")));
+//! assert_eq!(
+//!     Route::HelloWithAge {
+//!         name: String::from("John Doe"),
+//!         age: 30,
+//!     }.generate_url(locale, encode_params),
+//!     Some(String::from("/hello/John%20Doe/30")),
+//! );
+//! ```
+//!
+//! ## Sub-routes
+//!
+//! But for more complex routers, you're not gonna put everything into a single enum. You can break it up with sub-routes:
+//!
+//! ```
+//! use chemin::Chemin;
+//!
+//! ##[derive(Chemin, PartialEq, Eq, Debug)]
+//! enum Route {
+//!     /// You can use a sub-route by using ".." (only at the end of the path). The corresponding type must also implement `Chemin`.
+//!     ///
+//!     /// If you want a route to access "/sub-route" or "/sub-route/", it can't possibly be defined inside the sub-route, so it would
+//!     /// have to be a different additional route here.
+//!     ##[route("/sub-route/..")]
+//!     WithSubRoute(SubRoute),
+//!
+//!     /// You can also combine sub-route with url parameters, and use named sub-routes, by adding the name after "..".
+//!     ##[route("/hello/:name/..sub_route")]
+//!     HelloWithSubRoute {
+//!         name: String,
+//!         sub_route: SubRoute,
+//!     },
+//! }
+//!
+//! ##[derive(Chemin, PartialEq, Eq, Debug)]
+//! enum SubRoute {
+//!     ##[route("/a")]
+//!     A,
+//!
+//!     ##[route("/b")]
+//!     B,
+//! }
+//!
+//! // Url parsing:
+//! assert_eq!(Route::parse("/sub-route/a", true), Some((Route::WithSubRoute(SubRoute::A), vec![])));
+//! assert_eq!(
+//!     Route::parse("/hello/John/b", true),
+//!     Some((
+//!         Route::HelloWithSubRoute {
+//!             name: String::from("John"),
+//!             sub_route: SubRoute::B,
+//!         },
+//!         vec![],
+//!     )),
+//! );
+//!
+//! // Url generation:
+//! assert_eq!(Route::WithSubRoute(SubRoute::A).generate_url(None, true), Some(String::from("/sub-route/a")));
+//! ```
+//!
+//! ## Query strings parameters
+//!
+//! Query strings are supported:
+//!
+//! ```
+//! use chemin::Chemin;
+//!
+//! ##[derive(Chemin, PartialEq, Eq, Debug)]
+//! enum Route {
+//!     ##[route("/hello/:name")]
+//!     Hello {
+//!         name: String,
+//!
+//!         /// This attribute can only be used on named fields
+//!         ##[query_param]
+//!         age: u8,
+//!     }
+//! }
+//!
+//! // Url parsing:
+//! assert_eq!(Route::parse("/hello/John", true), None); // Route not found because the "age" query parameter wasn't provided
+//! assert_eq!(
+//!     Route::parse("/hello/John?age=30", true),
+//!     Some((
+//!         Route::Hello {
+//!             name: String::from("John"),
+//!             age: 30,
+//!         },
+//!         vec![],
+//!     ))
+//! );
+//!
+//! // Url generation:
+//! assert_eq!(
+//!     Route::Hello {
+//!         name: String::from("John"),
+//!         age: 30,
+//!     }.generate_url(None, true),
+//!     Some(String::from("/hello/John?age=30")),
+//! );
+//! ```
+//!
+//! Query parameters can also be optional:
+//!
+//! ```
+//! use chemin::Chemin;
+//!
+//! ##[derive(Chemin, PartialEq, Eq, Debug)]
+//! enum Route {
+//!     ##[route("/hello/:name")]
+//!     Hello {
+//!         name: String,
+//!         ##[query_param(optional)]
+//!         age: Option<u8>,
+//!     }
+//! }
+//!
+//! // Url parsing:
+//! assert_eq!(
+//!     Route::parse("/hello/John", true),
+//!     Some((
+//!         Route::Hello {
+//!             name: String::from("John"),
+//!             age: None,
+//!         },
+//!         vec![],
+//!     )),
+//! );
+//! assert_eq!(
+//!     Route::parse("/hello/John?age=30", true),
+//!     Some((
+//!         Route::Hello {
+//!             name: String::from("John"),
+//!             age: Some(30),
+//!         },
+//!         vec![],
+//!     )),
+//! );
+//!
+//! // Url generation:
+//! assert_eq!(
+//!     Route::Hello {
+//!         name: String::from("John"),
+//!         age: None,
+//!     }.generate_url(None, true),
+//!     Some(String::from("/hello/John")),
+//! );
+//! assert_eq!(
+//!     Route::Hello {
+//!         name: String::from("John"),
+//!         age: Some(30),
+//!     }.generate_url(None, true),
+//!     Some(String::from("/hello/John?age=30")),
+//! );
+//! ```
+//!
+//! Query parameters can have a default value:
+//!
+//! ```
+//! use chemin::Chemin;
+//!
+//! ##[derive(Chemin, PartialEq, Eq, Debug)]
+//! enum Route {
+//!     ##[route("/hello/:name")]
+//!     Hello {
+//!         name: String,
+//!         ##[query_param(default = 20)]
+//!         age: u8,
+//!     }
+//! }
+//!
+//! // Url parsing:
+//! assert_eq!(
+//!     Route::parse("/hello/John", true),
+//!     Some((
+//!         Route::Hello {
+//!             name: String::from("John"),
+//!             age: 20,
+//!         },
+//!         vec![],
+//!     )),
+//! );
+//! assert_eq!(
+//!     Route::parse("/hello/John?age=30", true),
+//!     Some((
+//!         Route::Hello {
+//!             name: String::from("John"),
+//!             age: 30,
+//!         },
+//!         vec![],
+//!     )),
+//! );
+//!
+//! // Url generation:
+//! assert_eq!(
+//!     Route::Hello {
+//!         name: String::from("John"),
+//!         age: 20,
+//!     }.generate_url(None, true),
+//!     Some(String::from("/hello/John")),
+//! );
+//! assert_eq!(
+//!     Route::Hello {
+//!         name: String::from("John"),
+//!         age: 30,
+//!     }.generate_url(None, true),
+//!     Some(String::from("/hello/John?age=30")),
+//! );
+//! ```
+//!
+//! If you use sub-routes, you can have query parameters defined at any level of the "route tree", and they will all share the same
+//! query string.
+//!
+//! ## Internationalization (i18n)
+//!
+//! This crate allows you to have translations of your routes for different languages, by defining multiple paths on each enum variant
+//! and associating each with one or multiple locale codes
+//! (as used with <https://developer.mozilla.org/en-US/docs/Web/API/Navigator/language>):
+//!
+//! ```
+//! use chemin::Chemin;
+//!
+//! ##[derive(Chemin, PartialEq, Eq, Debug)]
+//! enum Route {
+//!     ##[route("/")]
+//!     Home,
+//!
+//!     // Notice that the hyphens normally used in locale codes are here replaced by an underscore, to be valid rust identifiers
+//!     ##[route(en, en_US, en_UK => "/about")]
+//!     ##[route(fr, fr_FR => "/a-propos")]
+//!     About,
+//!
+//!     ##[route(en, en_US, en_UK => "/select/..")]
+//!     ##[route(fr, fr_FR => "/selectionner/..")]
+//!     Select(SelectRoute),
+//! }
+//!
+//! ##[derive(Chemin, PartialEq, Eq, Debug)]
+//! enum SelectRoute {
+//!     ##[route(en, en_US => "/color/:/:/:")]
+//!     ##[route(en_UK => "/colour/:/:/:")]
+//!     ##[route(fr, fr_FR => "/couleur/:/:/:")]
+//!     RgbColor(u8, u8, u8),
+//! }
+//!
+//! // Url parsing:
+//! assert_eq!(Route::parse("/", true), Some((Route::Home, vec![])));
+//!
+//! let about_english = Route::parse("/about", true).unwrap();
+//! assert_eq!(about_english.0, Route::About);
+//! // The `Vec<String>` of locales has to be asserted that way, because the order isn't guaranteed
+//! assert_eq!(about_english.1.len(), 3);
+//! assert!(about_english.1.contains(&"en"));
+//! assert!(about_english.1.contains(&"en-US")); // Notice that returned locale codes use hyphens and not underscores
+//! assert!(about_english.1.contains(&"en-UK"));
+//!
+//! let about_french = Route::parse("/a-propos", true).unwrap();
+//! assert_eq!(about_french.0, Route::About);
+//! assert_eq!(about_french.1.len(), 2);
+//! assert!(about_french.1.contains(&"fr"));
+//! assert!(about_french.1.contains(&"fr-FR"));
+//!
+//! let select_color_us_english = Route::parse("/select/color/0/255/0", true).unwrap();
+//! assert_eq!(select_color_us_english.0, Route::Select(SelectRoute::RgbColor(0, 255, 0)));
+//! assert_eq!(select_color_us_english.1.len(), 2); // The `Vec<String>` has to be asserted that way, because the order isn't guaranteed
+//! assert!(select_color_us_english.1.contains(&"en"));
+//! assert!(select_color_us_english.1.contains(&"en-US"));
+//!
+//! assert_eq!(
+//!     Route::parse("/select/colour/0/255/0", true),
+//!     Some((Route::Select(SelectRoute::RgbColor(0, 255, 0)), vec!["en-UK"])),
+//! );
+//!
+//! let select_color_french = Route::parse("/selectionner/couleur/0/255/0", true).unwrap();
+//! assert_eq!(select_color_french.0, Route::Select(SelectRoute::RgbColor(0, 255, 0)));
+//! assert_eq!(select_color_french.1.len(), 2); // The `Vec<String>` has to be asserted that way, because the order isn't guaranteed
+//! assert!(select_color_french.1.contains(&"fr"));
+//! assert!(select_color_french.1.contains(&"fr-FR"));
+//!
+//! assert_eq!(Route::parse("/select/couleur/0/255/0", true), None);
+//!
+//! // Url generation:
+//! assert_eq!(Route::Home.generate_url(Some("es"), true), Some(String::from("/")));
+//! assert_eq!(Route::Home.generate_url(None, true), Some(String::from("/")));
+//!
+//! // Notice that you have to use hyphens and not underscores in locale codes
+//! assert_eq!(Route::About.generate_url(Some("en"), true), Some(String::from("/about")));
+//! assert_eq!(Route::About.generate_url(Some("fr-FR"), true), Some(String::from("/a-propos")));
+//! assert_eq!(Route::About.generate_url(Some("es"), true), None);
+//! assert_eq!(Route::About.generate_url(None, true), None);
+//!
+//! assert_eq!(
+//!     Route::Select(SelectRoute::RgbColor(0, 255, 0)).generate_url(Some("en-UK"), true),
+//!     Some(String::from("/select/colour/0/255/0")),
+//! );
+//! assert_eq!(
+//!     Route::Select(SelectRoute::RgbColor(0, 255, 0)).generate_url(Some("fr-FR"), true),
+//!     Some(String::from("/selectionner/couleur/0/255/0")),
+//! );
+//! ```
+
+extern crate self as chemin;
+
 /// To derive the [Chemin] trait.
 ///
 /// To learn how to use it, see [the root of the documentation](index.html).
