@@ -1,3 +1,5 @@
+//! This is the proc-macro crate associated to [chemin](https://docs.rs/chemin). See [chemin](https://docs.rs/chemin) for documentation.
+
 mod derive_chemin;
 mod helpers;
 
