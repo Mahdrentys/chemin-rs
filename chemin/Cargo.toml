@@ -1,12 +1,19 @@
 [package]
 name = "chemin"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
+authors = ["Mahdrentys <mahdrentys@gmail.com>"]
+description = "An enum-based router generator, supporting query strings and i18n."
+readme = "../README.md"
+repository = "https://github.com/Mahdrentys/chemin-rs"
+license = "MIT"
+keywords = ["router", "enum", "url", "i18n", "query"]
+categories = ["web-programming", "internationalization", "localization", "parser-implementations"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-chemin-macros = { path = "../chemin-macros" }
+chemin-macros = { version = "0.1.0", path = "../chemin-macros" }
 once_cell = "1.16.0"
 percent-encoding = "2.2.0"
 qstring = "0.7.2"

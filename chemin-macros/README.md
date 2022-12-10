@@ -1,0 +1,1 @@
+Proc macro crate for [chemin](https://crates.io/crates/chemin) crate.
